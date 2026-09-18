@@ -140,6 +140,10 @@ if "player_id" not in st.session_state:
     st.session_state.player_id = None
 if "room_id" not in st.session_state:
     st.session_state.room_id = None
+if "submitting" not in st.session_state:
+    st.session_state.submitting = False
+if "answered_step" not in st.session_state:
+    st.session_state.answered_step = -1
 
 # --- サイドバー：途中終了機能 ---
 if st.session_state.room_id:
@@ -177,8 +181,9 @@ if not st.session_state.room_id:
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("新しくルームを作成", type="primary", use_container_width=True):
+        if st.button("新しくルームを作成", type="primary", use_container_width=True, disabled=st.session_state.submitting):
             if player_name:
+                st.session_state.submitting = True
                 room_id = str(random.randint(1000, 9999))
                 
                 try:
@@ -205,25 +210,30 @@ if not st.session_state.room_id:
                     st.session_state.room_id = room_id
                     st.session_state.player_id = p_res.data[0]["id"]
                     st.session_state.is_host = True
+                    st.session_state.submitting = False
                     st.rerun()
                 except Exception as e:
+                    st.session_state.submitting = False
                     st.error(f"❌ 登録エラー: {e}")
             else:
                 st.warning("プレイヤー名を入力してください")
 
     with col2:
         input_room_id = st.text_input("ルームID (4桁)")
-        if st.button("ルームに参加", use_container_width=True):
+        if st.button("ルームに参加", use_container_width=True, disabled=st.session_state.submitting):
             if player_name and input_room_id:
+                st.session_state.submitting = True
                 try:
                     room_check = safe_execute(supabase.table("rooms").select("*").eq("room_id", input_room_id))
                     if not room_check.data:
+                        st.session_state.submitting = False
                         st.error("指定されたルームIDが存在しません。")
                     else:
                         players_res = safe_execute(supabase.table("players").select("*").eq("room_id", input_room_id))
                         players = players_res.data if players_res.data else []
                         
                         if len(players) >= 4:
+                            st.session_state.submitting = False
                             st.error("このルームは満員です（最大4名）")
                         else:
                             p_res = safe_execute(supabase.table("players").insert({
@@ -235,8 +245,10 @@ if not st.session_state.room_id:
                             st.session_state.room_id = input_room_id
                             st.session_state.player_id = p_res.data[0]["id"]
                             st.session_state.is_host = False
+                            st.session_state.submitting = False
                             st.rerun()
                 except Exception as e:
+                    st.session_state.submitting = False
                     st.error(f"接続エラー: {e}")
 
 # --- B. ゲーム処理画面 ---
@@ -358,7 +370,7 @@ else:
             unsafe_allow_html=True
         )
 
-        # 誰かが正解した場合（背景色と文字色のコントラストを向上）
+        # 誰かが正解した場合
         if room_data["winner_name"]:
             st.markdown(
                 f"""
@@ -406,18 +418,24 @@ else:
                 time.sleep(2)
             st.rerun()
 
-        # 回答入力エリア
+        # 回答入力エリア（明示的な「送信ボタン」必須・1問につき1回のみ回答可能）
         else:
             if my_p and my_p.get("is_eliminated", False):
                 st.warning("☠️ あなたは脱落しました。観戦中...")
+            elif st.session_state.answered_step == step:
+                st.info("⌛ この問題の回答は送信済みです。他プレイヤーの回答または結果をお待ちください。")
             else:
-                user_ans = st.text_input(
-                    "回答を入力してEnter", 
-                    key=f"q_{step}",
-                    autocomplete="off"
-                )
+                with st.form(key=f"answer_form_{step}"):
+                    user_ans = st.text_input(
+                        "回答を入力してください", 
+                        autocomplete="off"
+                    )
+                    submit_button = st.form_submit_button("回答を送信", type="primary", use_container_width=True)
                 
-                if user_ans:
+                if submit_button and user_ans:
+                    # 1問につき1回の回答制限フラグを記録
+                    st.session_state.answered_step = step
+                    
                     correct_answers = [a.strip().lower() for a in str(current_q["answer"]).split("/")]
                     input_ans = user_ans.strip().lower()
                     
