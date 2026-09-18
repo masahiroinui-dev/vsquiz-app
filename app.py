@@ -10,7 +10,7 @@ import json
 # ページ基本設定
 st.set_page_config(page_title="VS Quiz App", layout="centered")
 
-# --- カスタムCSS（背景画像 JPG の自動検出と文字の視認性向上設定）---
+# --- カスタムCSS（背景画像 JPG の自動検出・文字・ボタンの視認性向上設定）---
 bg_path = None
 possible_bg_paths = [
     "asset/bg/bg.jpg",
@@ -54,6 +54,19 @@ if bg_path and os.path.exists(bg_path):
             border-radius: 16px;
             box-shadow: 0px 6px 16px rgba(0, 0, 0, 0.2);
             color: #111111;
+        }}
+
+        /* タブレット・ブラウザでのボタン潰れ対策（黒文字黒背景の防止） */
+        .stButton > button {{
+            background-color: #ffffff !important;
+            color: #1a202c !important;
+            border: 1px solid #cbd5e0 !important;
+            font-weight: bold !important;
+        }}
+        .stButton > button[kind="primary"] {{
+            background-color: #3182ce !important;
+            color: #ffffff !important;
+            border: none !important;
         }}
         </style>
         """,
@@ -276,7 +289,6 @@ else:
 
         if st.session_state.get("is_host", False):
             if st.button("ゲームスタート！", type="primary", use_container_width=True):
-                # カウントダウンフェーズに移行
                 safe_execute(supabase.table("rooms").update({"status": "countdown"}).eq("room_id", room_id))
                 st.rerun()
         else:
@@ -284,13 +296,12 @@ else:
             time.sleep(2)
             st.rerun()
 
-    # B-1.5. スタート前カウントダウン画面（ラグ解消用の同期フェーズ）
+    # B-1.5. カウントダウン画面
     elif room_data["status"] == "countdown":
         st.markdown("<h2 style='text-align: center;'>まもなくゲームが始まります！</h2>", unsafe_allow_html=True)
         
         countdown_place = st.empty()
         
-        # 3秒カウントダウン表示
         for count in range(3, 0, -1):
             countdown_place.markdown(
                 f"<h1 style='text-align: center; font-size: 80px; color: #e53e3e;'>{count}</h1>",
@@ -304,7 +315,6 @@ else:
         )
         time.sleep(0.5)
 
-        # ホスト端末が代表して status を playing に変更
         if st.session_state.get("is_host", False):
             safe_execute(supabase.table("rooms").update({"status": "playing"}).eq("room_id", room_id))
             
@@ -348,20 +358,25 @@ else:
             unsafe_allow_html=True
         )
 
-        # 誰かが正解した場合
+        # 誰かが正解した場合（背景色と文字色のコントラストを向上）
         if room_data["winner_name"]:
-            st.success(f"🎉 **{room_data['winner_name']}** さんが正解しました！")
+            st.markdown(
+                f"""
+                <div style="background-color: #d4edda; color: #155724; padding: 16px; border-radius: 8px; border: 1px solid #c3e6cb; margin-bottom: 12px; font-weight: bold; font-size: 1.1rem;">
+                    🎉 <strong>{room_data['winner_name']}</strong> さんが正解しました！
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
             st.info(f"💡 **解説**: {current_q.get('explanation', '解説はありません。')}")
             st.write("5秒後に次の問題へ進みます...")
             
-            # ホスト端末が代表して一括ダメージ処理＆ポイント計算を行う
             if st.session_state.get("is_host", False):
                 time.sleep(5)
                 winner_name = room_data["winner_name"]
                 for p in players_data:
                     if not p.get("is_eliminated", False):
                         if p["player_name"] == winner_name:
-                            # 正解者：スコア+1、連続正解+1（2連続正解でライフ回復）
                             new_streak = p.get("streak", 0) + 1
                             new_life = p.get("life", 5)
                             if new_streak >= 2:
@@ -374,7 +389,6 @@ else:
                                 "score": p["score"] + 1
                             }).eq("id", p["id"]))
                         else:
-                            # 非正解者：ライフ-1のダメージ（0なら脱落）＆連続正解リセット
                             current_life = p.get("life", 5) - 1
                             is_elim = current_life <= 0
                             
@@ -384,7 +398,6 @@ else:
                                 "is_eliminated": is_elim
                             }).eq("id", p["id"]))
 
-                # 次の問題へ遷移
                 safe_execute(supabase.table("rooms").update({
                     "current_step": step + 1,
                     "winner_name": None
@@ -412,7 +425,6 @@ else:
                         safe_execute(supabase.table("rooms").update({"winner_name": my_p["player_name"]}).eq("room_id", room_id))
                         st.rerun()
                     else:
-                        # 不正解の場合の誤答ペナルティ（ライフ-1）
                         current_life = my_p.get("life", 5) - 1
                         is_elim = current_life <= 0
                         
