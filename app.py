@@ -134,13 +134,11 @@ if st.session_state.room_id:
         st.write(f"🔑 ルームID: **{st.session_state.room_id}**")
         if st.button("⚠️ ゲームを途中終了する", use_container_width=True):
             try:
-                # Supabaseからプレイヤー情報を削除
                 if st.session_state.player_id:
                     safe_execute(supabase.table("players").delete().eq("id", st.session_state.player_id))
             except Exception:
                 pass
             
-            # セッション状態のリセット
             st.session_state.clear()
             st.rerun()
 
@@ -278,12 +276,39 @@ else:
 
         if st.session_state.get("is_host", False):
             if st.button("ゲームスタート！", type="primary", use_container_width=True):
-                safe_execute(supabase.table("rooms").update({"status": "playing"}).eq("room_id", room_id))
+                # カウントダウンフェーズに移行
+                safe_execute(supabase.table("rooms").update({"status": "countdown"}).eq("room_id", room_id))
                 st.rerun()
         else:
             st.write("⏳ ホストがスタートを押すのをお待ちください...")
             time.sleep(2)
             st.rerun()
+
+    # B-1.5. スタート前カウントダウン画面（ラグ解消用の同期フェーズ）
+    elif room_data["status"] == "countdown":
+        st.markdown("<h2 style='text-align: center;'>まもなくゲームが始まります！</h2>", unsafe_allow_html=True)
+        
+        countdown_place = st.empty()
+        
+        # 3秒カウントダウン表示
+        for count in range(3, 0, -1):
+            countdown_place.markdown(
+                f"<h1 style='text-align: center; font-size: 80px; color: #e53e3e;'>{count}</h1>",
+                unsafe_allow_html=True
+            )
+            time.sleep(1)
+            
+        countdown_place.markdown(
+            "<h1 style='text-align: center; font-size: 80px; color: #3182ce;'>START!</h1>",
+            unsafe_allow_html=True
+        )
+        time.sleep(0.5)
+
+        # ホスト端末が代表して status を playing に変更
+        if st.session_state.get("is_host", False):
+            safe_execute(supabase.table("rooms").update({"status": "playing"}).eq("room_id", room_id))
+            
+        st.rerun()
 
     # B-2. プレイ中画面
     elif room_data["status"] == "playing":
@@ -329,12 +354,14 @@ else:
             st.info(f"💡 **解説**: {current_q.get('explanation', '解説はありません。')}")
             st.write("5秒後に次の問題へ進みます...")
             
+            # ホスト端末が代表して一括ダメージ処理＆ポイント計算を行う
             if st.session_state.get("is_host", False):
                 time.sleep(5)
                 winner_name = room_data["winner_name"]
                 for p in players_data:
                     if not p.get("is_eliminated", False):
                         if p["player_name"] == winner_name:
+                            # 正解者：スコア+1、連続正解+1（2連続正解でライフ回復）
                             new_streak = p.get("streak", 0) + 1
                             new_life = p.get("life", 5)
                             if new_streak >= 2:
@@ -347,10 +374,17 @@ else:
                                 "score": p["score"] + 1
                             }).eq("id", p["id"]))
                         else:
+                            # 非正解者：ライフ-1のダメージ（0なら脱落）＆連続正解リセット
+                            current_life = p.get("life", 5) - 1
+                            is_elim = current_life <= 0
+                            
                             safe_execute(supabase.table("players").update({
-                                "streak": 0
+                                "life": max(0, current_life),
+                                "streak": 0,
+                                "is_eliminated": is_elim
                             }).eq("id", p["id"]))
 
+                # 次の問題へ遷移
                 safe_execute(supabase.table("rooms").update({
                     "current_step": step + 1,
                     "winner_name": None
@@ -378,6 +412,7 @@ else:
                         safe_execute(supabase.table("rooms").update({"winner_name": my_p["player_name"]}).eq("room_id", room_id))
                         st.rerun()
                     else:
+                        # 不正解の場合の誤答ペナルティ（ライフ-1）
                         current_life = my_p.get("life", 5) - 1
                         is_elim = current_life <= 0
                         
